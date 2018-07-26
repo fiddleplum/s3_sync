@@ -3,22 +3,39 @@
 import boto3
 import mimetypes
 import os
+import re
 import sys
 import time
 
 def log(message, error):
 	print(message)
 
+def get_ignore_list(local_folder):
+	ignore_list = []
+	if os.path.isfile(local_folder + 'ignore.txt'):
+		with open(local_folder + 'ignore.txt') as ignore_file:
+			for line in ignore_file:
+				ignore_list.append(re.compile(line.strip()))
+	return ignore_list
+
 def create_manifest_from_local_folder(local_folder):
 	manifest = {}
+	ignore_list = get_ignore_list(local_folder)
 	for root, directories, filenames in os.walk(local_folder):
 		if not root.endswith('/'):
 			root += '/'
 		for filename in filenames:
-			file_path = (root + filename)[len(local_folder):].replace(os.sep, '/') # so it works in windows
-			if file_path == 'manifest.txt':
+			filename = (root + filename)[len(local_folder):].replace(os.sep, '/') # so it works in windows
+			if filename == 'manifest.txt':
 				continue
-			manifest[file_path] = int(os.path.getmtime(os.path.join(local_folder, file_path)))
+			ignoring = False
+			for ignore_pattern in ignore_list:
+				if ignore_pattern.match(filename):
+					ignoring = True
+					break
+			if ignoring:
+				continue
+			manifest[filename] = int(os.path.getmtime(os.path.join(local_folder, filename)))
 	return manifest
 
 def create_manifest_from_s3_folder(s3_bucket, s3_prefix):
@@ -76,15 +93,23 @@ def put_manifest_to_s3_folder(s3_bucket, s3_prefix, local_folder, manifest):
 def backup(local_folder, s3_bucket, s3_prefix):
 	s3_folder_manifest = get_manifest_from_s3_folder(s3_bucket, s3_prefix)
 	local_folder_manifest = create_manifest_from_local_folder(local_folder)
-	for filename, modified_time in local_folder_manifest.items():
+	count = 0
+	for filename in sorted(local_folder_manifest):
+		modified_time = local_folder_manifest[filename]
 		if (filename not in s3_folder_manifest) or (modified_time != s3_folder_manifest[filename]):
-			log(str(filename not in s3_folder_manifest), False)
-			log(str(modified_time) + ' ' + str(s3_folder_manifest[filename]), False)
 			log('Uploading ' + filename, False)
-			upload_file_to_s3(s3_bucket, s3_prefix, local_folder, filename, modified_time)
+			try:
+				upload_file_to_s3(s3_bucket, s3_prefix, local_folder, filename, modified_time)
+			except FileNotFoundError as e:
+				del local_folder_manifest[filename]
+				continue
 			s3_folder_manifest[filename] = modified_time
+			count += 1
+			if count == 100:
+				put_manifest_to_s3_folder(s3_bucket, s3_prefix, local_folder, s3_folder_manifest)
+				count = 0
 	filenames_removed = []
-	for filename in s3_folder_manifest.keys():
+	for filename in sorted(s3_folder_manifest):
 		if filename not in local_folder_manifest:
 			log('Removing ' + filename, False)
 			s3_bucket.Object(s3_prefix + filename).delete()
@@ -96,7 +121,8 @@ def backup(local_folder, s3_bucket, s3_prefix):
 def restore(local_folder, s3_bucket, s3_prefix):
 	s3_folder_manifest = get_manifest_from_s3_folder(s3_bucket, s3_prefix)
 	local_folder_manifest = create_manifest_from_local_folder(local_folder)
-	for filename, modified_time in s3_folder_manifest.items():
+	for filename in sorted(s3_folder_manifest):
+		modified_time = s3_folder_manifest[filename]
 		if (filename not in local_folder_manifest) or (modified_time != local_folder_manifest[filename]):
 			path = os.path.dirname(os.path.join(local_folder, filename))
 			if not os.path.exists(path):
@@ -105,7 +131,7 @@ def restore(local_folder, s3_bucket, s3_prefix):
 			download_file_from_s3(s3_bucket, s3_prefix, local_folder, filename, modified_time)
 			local_folder_manifest[filename] = modified_time
 	filenames_removed = []
-	for filename in local_folder_manifest.keys():
+	for filename in sorted(local_folder_manifest):
 		if filename not in s3_folder_manifest:
 			log('Removing ' + filename, False)
 			os.unlink(os.path.join(local_folder, filename))
