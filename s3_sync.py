@@ -56,6 +56,7 @@ def create_manifest_from_s3_folder(s3_bucket, s3_prefix):
 def get_manifest_from_s3_folder(s3_bucket, s3_prefix):
 	manifest = {}
 	try:
+		log(s3_prefix, False)
 		s3_bucket.download_file(s3_prefix + 'manifest.txt', 'manifest.txt')
 		with open('manifest.txt') as manifest_file:
 			for line in manifest_file:
@@ -139,21 +140,28 @@ def restore(local_folder, s3_bucket, s3_prefix):
 	for filename in filenames_removed:
 		del local_folder_manifest[filename]
 
+def update_manifest(s3_bucket, s3_prefix):
+	manifest = create_manifest_from_s3_folder(s3_bucket, s3_prefix)
+	put_manifest_to_s3_folder(s3_bucket, s3_prefix, './', manifest)
+	os.unlink('./manifest.txt')
+
 if __name__ == '__main__':
-	if len(sys.argv) < 4:
-		log('Usage: s3_sync.py <operation> <from folder> <to folder>', True)
-		log('Operations: backup, restore', True)
+	if len(sys.argv) < 3:
+		log('Usage: s3_sync.py <operation> <s3 folder> <local folder>', True)
+		log('Operations: backup, restore, update-s3-manifest', True)
 		log('S3 folder format: <bucket name>/<folder path>', True)
+		log('If you do update-s3-manifest, you don\'t need the local folder.', True)
 		sys.exit(-1)
 
 	# Get the arguments.
 	operation = sys.argv[1]
-	from_folder = sys.argv[2]
-	to_folder = sys.argv[3]
-	if not from_folder.endswith('/'):
-		from_folder += '/'
-	if not to_folder.endswith('/'):
-		to_folder += '/'
+	s3_folder = sys.argv[2]
+	if len(sys.argv) == 4:
+		local_folder = sys.argv[3]
+		if not local_folder.endswith('/'):
+			local_folder += '/'
+	if not s3_folder.endswith('/'):
+		s3_folder += '/'
 
 	# Setup S3 from keys.txt.
 	if os.path.isfile('keys.txt'):
@@ -166,17 +174,17 @@ if __name__ == '__main__':
 		log('The key file keys.txt is missing.', True)
 		sys.exit(-1)
 
+	s3_bucket, *s3_prefix = s3_folder.split('/')
+	s3_prefix = '/'.join(s3_prefix)
+	s3_bucket = s3.Bucket(s3_bucket)
+
 	# Do the operations.
 	if operation == 'backup':
-		s3_bucket, *s3_prefix = to_folder.split('/')
-		s3_prefix = '/'.join(s3_prefix)
-		s3_bucket = s3.Bucket(s3_bucket)
-		backup(from_folder, s3_bucket, s3_prefix)
+		backup(local_folder, s3_bucket, s3_prefix)
 	elif operation == 'restore':
-		s3_bucket, *s3_prefix = from_folder.split('/')
-		s3_prefix = '/'.join(s3_prefix)
-		s3_bucket = s3.Bucket(s3_bucket)
-		restore(to_folder, s3_bucket, s3_prefix)
+		restore(local_folder, s3_bucket, s3_prefix)
+	elif operation == 'update-s3-manifest':
+		update_manifest(s3_bucket, s3_prefix)
 	else:
 		log('Unknown operation.', True)
 		sys.exit(-1)
