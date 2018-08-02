@@ -18,9 +18,12 @@ def get_ignore_list(local_folder):
 				ignore_list.append(re.compile(line.strip()))
 	return ignore_list
 
-def create_manifest_from_local_folder(local_folder):
+def create_manifest_from_local_folder(local_folder, use_ignore):
 	manifest = {}
-	ignore_list = get_ignore_list(local_folder)
+	if use_ignore:
+		ignore_list = get_ignore_list(local_folder)
+	else:
+		ignore_list = []
 	for root, directories, filenames in os.walk(local_folder):
 		if not root.endswith('/'):
 			root += '/'
@@ -93,7 +96,7 @@ def put_manifest_to_s3_folder(s3_bucket, s3_prefix, local_folder, manifest):
 
 def backup(local_folder, s3_bucket, s3_prefix):
 	s3_folder_manifest = get_manifest_from_s3_folder(s3_bucket, s3_prefix)
-	local_folder_manifest = create_manifest_from_local_folder(local_folder)
+	local_folder_manifest = create_manifest_from_local_folder(local_folder, True)
 	count = 0
 	for filename in sorted(local_folder_manifest):
 		modified_time = local_folder_manifest[filename]
@@ -121,7 +124,7 @@ def backup(local_folder, s3_bucket, s3_prefix):
 
 def restore(local_folder, s3_bucket, s3_prefix):
 	s3_folder_manifest = get_manifest_from_s3_folder(s3_bucket, s3_prefix)
-	local_folder_manifest = create_manifest_from_local_folder(local_folder)
+	local_folder_manifest = create_manifest_from_local_folder(local_folder, False)
 	for filename in sorted(s3_folder_manifest):
 		modified_time = s3_folder_manifest[filename]
 		if (filename not in local_folder_manifest) or (modified_time != local_folder_manifest[filename]):
