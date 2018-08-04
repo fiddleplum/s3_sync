@@ -193,3 +193,4 @@ if __name__ == '__main__':
 		sys.exit(-1)
 
 	log('Completed.', False)
+	input('Press enter to continue.')
